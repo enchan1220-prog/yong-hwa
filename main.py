@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from textwrap import fill
 
 import pandas as pd
 import requests
@@ -128,6 +129,98 @@ def load_box_office(target_date, api_key):
     return movies
 
 
+def show_audience_chart(df):
+    # 제목을 막대 위에 놓으면 작은 화면에서도 그래프 너비를 넉넉히 쓸 수 있습니다.
+    top5 = df.nlargest(5, "관객수").copy()
+    top5["제목표시"] = top5.apply(
+        lambda movie: fill(f"{movie['순위']}위 · {movie['영화명']}", width=18), axis=1
+    )
+    top5["관객표시"] = top5["관객수"].map(lambda count: f"{count:,}명")
+    title_lines = max(title.count("\n") + 1 for title in top5["제목표시"])
+    row_height = max(80, title_lines * 18 + 48)
+    bar_offset = row_height / 2 - 22
+
+    # Vega-Lite는 Streamlit의 기본 차트 기능입니다. 추가 라이브러리는 필요 없습니다.
+    # 제목, 막대, 숫자를 겹쳐 그리되 숫자 오른쪽에 충분한 여백을 남깁니다.
+    spec = {
+        "height": row_height * len(top5),
+        "background": "#faf6ec",
+        "padding": {"left": 8, "right": 16, "top": 8, "bottom": 8},
+        "params": [{
+            "name": "hover_movie",
+            "select": {
+                "type": "point", "fields": ["영화명"],
+                "on": "pointerover", "clear": "pointerout", "toggle": False,
+            },
+        }],
+        "encoding": {
+            "y": {
+                "field": "영화명", "type": "nominal",
+                "sort": top5["영화명"].tolist(), "axis": None,
+                "scale": {"paddingInner": 0, "paddingOuter": 0},
+            },
+            "x": {
+                "field": "관객수", "type": "quantitative",
+                "scale": {"domain": [0, max(int(top5["관객수"].max()) * 1.5, 1)]},
+                "axis": {
+                    "title": "어제 관객수 (명)", "format": ",.0f", "tickCount": 3,
+                    "tickMinStep": 1, "domain": False, "ticks": False,
+                    "gridColor": "#dfd3be", "gridDash": [3, 5],
+                    "labelPadding": 8, "titlePadding": 14,
+                },
+            },
+            "tooltip": [
+                {"field": "영화명", "type": "nominal", "title": "영화명"},
+                {"field": "순위", "type": "ordinal", "title": "박스오피스 순위"},
+                {"field": "관객수", "type": "quantitative", "title": "어제 관객수 (명)", "format": ",.0f"},
+                {"field": "누적관객", "type": "quantitative", "title": "누적관객 (명)", "format": ",.0f"},
+                {"field": "개봉일", "type": "nominal", "title": "개봉일"},
+            ],
+        },
+        "layer": [
+            {
+                "mark": {"type": "bar", "size": 20, "cornerRadiusEnd": 4, "yOffset": bar_offset},
+                "encoding": {
+                    "color": {
+                        "condition": {"test": "datum['순위'] === 1", "value": "#7b342d"},
+                        "value": "#a88966",
+                    },
+                    "opacity": {
+                        "condition": {"param": "hover_movie", "value": 1}, "value": 0.5,
+                    },
+                },
+            },
+            {
+                "mark": {
+                    "type": "text", "align": "left", "baseline": "top",
+                    "dy": -row_height / 2 + 8, "fontSize": 14,
+                    "fontWeight": "bold", "lineBreak": "\n", "lineHeight": 18,
+                },
+                "encoding": {"x": {"value": 0}, "text": {"field": "제목표시"}},
+            },
+            {
+                "mark": {
+                    "type": "text", "align": "left", "baseline": "middle",
+                    "dx": 8, "dy": bar_offset, "fontSize": 13, "fontWeight": "bold",
+                },
+                "encoding": {"text": {"field": "관객표시"}},
+            },
+        ],
+        "config": {
+            "view": {"stroke": None},
+            "font": "Batang, Noto Serif KR, serif",
+            "text": {"color": "#382d24"},
+            "axis": {"labelColor": "#75634f", "titleColor": "#75634f"},
+        },
+    }
+    description = "어제 관객수 상위 작품을 관객수 내림차순으로 비교한 가로 막대그래프. "
+    description += "; ".join(
+        f"{movie['영화명']}: {movie['관객수']:,}명"
+        for _, movie in top5.iterrows()
+    )
+    st.vega_lite_chart(top5, spec, width="stretch", theme=None, alt=description)
+
+
 def main():
     # 날짜 계산은 캐시 바깥에서 실행하여 한국의 날짜가 바뀌면 새 날짜를 씁니다.
     yesterday = datetime.now(KST).date() - timedelta(days=1)
@@ -221,9 +314,12 @@ def main():
     card3.metric("스크린수", f"{first_place['스크린수']:,}개")
 
     st.subheader("관객 동원의 성세 · 상위 다섯 작품")
-    st.caption("전일 관객수가 많은 다섯 작품을 가려, 그 수효를 막대의 길이로 나타내었사옵니다.")
-    top5 = df.nlargest(5, "관객수")
-    st.bar_chart(top5, x="영화명", y="관객수", sort="-관객수", color="#7b342d")
+    st.caption(
+        "관객수가 많은 작품부터 위에 모시고, 각 막대의 끝에 관객수를 밝혀 적었사옵니다. "
+        "작품명 앞의 숫자는 박스오피스 순위이며, 짙은 적갈색은 1위 작품을 가리키옵니다."
+    )
+    show_audience_chart(df)
+    st.caption("막대나 작품명에 마우스를 올리시면 개봉일과 누적관객을 함께 살펴보실 수 있사옵니다.")
 
     st.subheader("전일 박스오피스 순위 · 작품별 흥행 일람")
     st.caption("순위와 영화명, 개봉일 및 관객·스크린의 수효를 아래의 일람에 갖추어 기록하옵니다.")
