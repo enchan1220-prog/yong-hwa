@@ -9,7 +9,8 @@ import streamlit as st
 st.set_page_config(page_title="전일 흥행 연감 | 어제의 박스오피스", page_icon="🎞️", layout="wide")
 
 # 별도 디자인 파일 없이, 이 파일 안에서 종이와 잉크를 닮은 색을 지정합니다.
-# 글꼴은 기기에 설치된 명조체부터 사용하므로 외부 다운로드가 필요 없습니다.
+# 제목은 기기에 설치된 궁서체를 쓰고, 없으면 명조체로 표시합니다.
+# 긴 설명과 숫자는 읽기 편한 명조체로 두며, 외부 글꼴 다운로드는 필요 없습니다.
 st.markdown(
     """
     <style>
@@ -19,10 +20,18 @@ st.markdown(
     }
     [data-testid="stHeader"] { background: transparent; }
     .block-container { max-width: 1120px; padding-top: 3rem; }
-    h1, h2, h3, [data-testid="stMarkdownContainer"] p,
+    [data-testid="stMarkdownContainer"] p,
     [data-testid="stMetricLabel"], [data-testid="stMetricValue"] {
         font-family: "Noto Serif KR", "Batang", "바탕", serif;
         color: #382d24;
+    }
+    h1, h2, h3 {
+        font-family: "Gungsuh", "GungsuhChe", "궁서", "궁서체", "Batang", "바탕", serif;
+        font-weight: 400;
+        color: #382d24;
+        line-height: 1.6;
+        word-break: keep-all;
+        overflow-wrap: anywhere;
     }
     h1 {
         border-top: 3px double #8b7355;
@@ -54,7 +63,7 @@ st.markdown(
     }
     .edition-mark {
         color: #7b342d;
-        font-family: "Batang", "바탕", serif;
+        font-family: "Gungsuh", "GungsuhChe", "궁서", "궁서체", "Batang", "바탕", serif;
         font-size: 0.85rem;
         letter-spacing: 0.25em;
     }
@@ -144,15 +153,9 @@ def show_audience_chart(df):
     # 제목, 막대, 숫자를 겹쳐 그리되 숫자 오른쪽에 충분한 여백을 남깁니다.
     spec = {
         "height": row_height * len(top5),
+        "autosize": {"type": "fit-x", "contains": "padding", "resize": True},
         "background": "#faf6ec",
         "padding": {"left": 8, "right": 16, "top": 8, "bottom": 8},
-        "params": [{
-            "name": "hover_movie",
-            "select": {
-                "type": "point", "fields": ["영화명"],
-                "on": "pointerover", "clear": "pointerout", "toggle": False,
-            },
-        }],
         "encoding": {
             "y": {
                 "field": "영화명", "type": "nominal",
@@ -179,6 +182,15 @@ def show_audience_chart(df):
         },
         "layer": [
             {
+                # 선택 설정은 막대에만 붙입니다. 전체에 붙이면 여러 계층에서
+                # 같은 이름의 신호가 중복 생성되어 그래프가 안 보일 수 있습니다.
+                "params": [{
+                    "name": "hover_movie",
+                    "select": {
+                        "type": "point", "fields": ["영화명"],
+                        "on": "pointerover", "clear": "pointerout", "toggle": False,
+                    },
+                }],
                 "mark": {"type": "bar", "size": 20, "cornerRadiusEnd": 4, "yOffset": bar_offset},
                 "encoding": {
                     "color": {
@@ -194,7 +206,9 @@ def show_audience_chart(df):
                 "mark": {
                     "type": "text", "align": "left", "baseline": "top",
                     "dy": -row_height / 2 + 8, "fontSize": 14,
-                    "fontWeight": "bold", "lineBreak": "\n", "lineHeight": 18,
+                    # 그래프에서도 작품명만 궁서체로 강조합니다.
+                    "font": "Gungsuh, GungsuhChe, 궁서, 궁서체, Batang, serif",
+                    "fontWeight": "normal", "lineBreak": "\n", "lineHeight": 18,
                 },
                 "encoding": {"x": {"value": 0}, "text": {"field": "제목표시"}},
             },
@@ -218,7 +232,9 @@ def show_audience_chart(df):
         f"{movie['영화명']}: {movie['관객수']:,}명"
         for _, movie in top5.iterrows()
     )
-    st.vega_lite_chart(top5, spec, width="stretch", theme=None, alt=description)
+    # 접근성 설명은 차트 명세에 넣어 구버전에서도 지원하도록 합니다.
+    spec["description"] = description
+    st.vega_lite_chart(top5, spec, use_container_width=True, theme=None)
 
 
 def main():
