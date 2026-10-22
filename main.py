@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from textwrap import fill
 
 import pandas as pd
@@ -6,7 +6,7 @@ import requests
 import streamlit as st
 
 
-st.set_page_config(page_title="전일 흥행 연감 | 어제의 박스오피스", page_icon="🎞️", layout="wide")
+st.set_page_config(page_title="일별 흥행 연감 | 그날의 박스오피스", page_icon="🎞️", layout="wide")
 
 # 별도 디자인 파일 없이, 이 파일 안에서 종이와 잉크를 닮은 색을 지정합니다.
 # 제목은 기기에 설치된 궁서체를 쓰고, 없으면 명조체로 표시합니다.
@@ -81,6 +81,10 @@ API_URL = (
 )
 
 
+class BoxOfficeNotReady(ValueError):
+    """영화 목록이 비어 있어 아직 열람할 기록이 없는 경우입니다."""
+
+
 # 같은 날짜를 반복 조회하면 10분 동안 결과를 재사용합니다.
 # 요청 실패나 API 오류는 예외로 처리하므로 캐시에 저장되지 않습니다.
 @st.cache_data(ttl=600, show_spinner=False)
@@ -130,12 +134,26 @@ def load_box_office(target_date, api_key):
             "KOBIS 서비스의 운영 상태와 API 응답 형식을 확인하여 주시옵소서."
         )
     if not movies:
-        raise ValueError(
-            "전일의 영화 목록이 아직 비어 있어, 이 지면에 옮겨 적을 기록이 없사옵니다. "
-            "이는 관객 집계 또는 자료 반영의 지연에서 비롯될 수 있사오니, "
-            "KOBIS에 해당 날짜의 자료가 등록되었는지 확인하신 뒤 잠시 후 다시 열람하여 주시옵소서."
+        raise BoxOfficeNotReady(
+            "그날은 아직 집계 전입니다. 잠시 후 다시 열람하여 주시옵소서."
         )
     return movies
+
+
+def format_rank_change(change):
+    if change > 0:
+        return f"↑ {change}"
+    if change < 0:
+        return f"↓ {abs(change)}"
+    return "—"
+
+
+def style_rank_change(change):
+    if change > 0:
+        return "color: #c62828; font-weight: bold"
+    if change < 0:
+        return "color: #1565c0; font-weight: bold"
+    return "color: #75634f"
 
 
 def show_audience_chart(df):
@@ -166,7 +184,7 @@ def show_audience_chart(df):
                 "field": "관객수", "type": "quantitative",
                 "scale": {"domain": [0, max(int(top5["관객수"].max()) * 1.5, 1)]},
                 "axis": {
-                    "title": "어제 관객수 (명)", "format": ",.0f", "tickCount": 3,
+                    "title": "당일 관객수 (명)", "format": ",.0f", "tickCount": 3,
                     "tickMinStep": 1, "domain": False, "ticks": False,
                     "gridColor": "#dfd3be", "gridDash": [3, 5],
                     "labelPadding": 8, "titlePadding": 14,
@@ -175,7 +193,7 @@ def show_audience_chart(df):
             "tooltip": [
                 {"field": "영화명", "type": "nominal", "title": "영화명"},
                 {"field": "순위", "type": "ordinal", "title": "박스오피스 순위"},
-                {"field": "관객수", "type": "quantitative", "title": "어제 관객수 (명)", "format": ",.0f"},
+                {"field": "관객수", "type": "quantitative", "title": "당일 관객수 (명)", "format": ",.0f"},
                 {"field": "누적관객", "type": "quantitative", "title": "누적관객 (명)", "format": ",.0f"},
                 {"field": "개봉일", "type": "nominal", "title": "개봉일"},
             ],
@@ -227,7 +245,7 @@ def show_audience_chart(df):
             "axis": {"labelColor": "#75634f", "titleColor": "#75634f"},
         },
     }
-    description = "어제 관객수 상위 작품을 관객수 내림차순으로 비교한 가로 막대그래프. "
+    description = "선택한 날짜의 관객수 상위 작품을 관객수 내림차순으로 비교한 가로 막대그래프. "
     description += "; ".join(
         f"{movie['영화명']}: {movie['관객수']:,}명"
         for _, movie in top5.iterrows()
@@ -240,16 +258,27 @@ def show_audience_chart(df):
 def main():
     # 날짜 계산은 캐시 바깥에서 실행하여 한국의 날짜가 바뀌면 새 날짜를 씁니다.
     yesterday = datetime.now(KST).date() - timedelta(days=1)
-    target_date = yesterday.strftime("%Y%m%d")  # API는 여덟 자리 날짜를 받습니다.
 
     st.markdown('<div class="edition-mark">映 畫 · 日 日 記 錄</div>', unsafe_allow_html=True)
-    st.title("전일 흥행 연감")
+    st.title("일별 흥행 연감")
     st.markdown(
-        "어제의 박스오피스에 아로새겨진 관객의 발자취를 삼가 모아, "
+        "고르신 날의 박스오피스에 아로새겨진 관객의 발자취를 삼가 모아, "
         "은막을 수놓은 작품들의 흥행 성세와 그 누적의 궤적을 이 한 장의 지면에 펼쳐 보이옵니다."
     )
+    selected_date = st.date_input(
+        "열람하실 날짜를 고르시옵소서",
+        value=yesterday,
+        min_value=date(1900, 1, 1),
+        max_value=yesterday,
+        format="YYYY/MM/DD",
+        help="금일의 기록은 아직 집계 전이오니, 한국 시간으로 어제까지 고르실 수 있사옵니다.",
+    )
+    if selected_date is None:
+        st.info("열람하실 날짜를 먼저 골라 주시옵소서.")
+        return
+    target_date = selected_date.strftime("%Y%m%d")  # API는 여덟 자리 날짜를 받습니다.
     st.caption(
-        f"기록의 기준일 · {yesterday:%Y년 %m월 %d일} (한국 시간의 어제) "
+        f"기록의 기준일 · {selected_date:%Y년 %m월 %d일} (한국 시간) "
         "│ 자료의 출전 · 영화진흥위원회 KOBIS"
     )
 
@@ -272,11 +301,11 @@ def main():
         return
 
     # 버튼을 누르면 앱이 다시 실행됩니다. 실패한 요청은 캐시되지 않아 재시도됩니다.
-    st.button("전일의 기록을 다시 열람하다")
+    st.button("고른 날의 기록을 다시 열람하다")
     st.caption("한 차례 무사히 수신한 기록은 10분간 보관하여, 거듭된 열람에 활용하옵니다.")
 
     try:
-        with st.spinner("전일의 흥행 기록을 청하여 이 지면에 옮기는 중이옵니다…"):
+        with st.spinner("고르신 날의 흥행 기록을 청하여 이 지면에 옮기는 중이옵니다…"):
             movies = load_box_office(target_date, api_key.strip())
     except requests.exceptions.Timeout:
         st.error(
@@ -291,6 +320,9 @@ def main():
             "네트워크 연결, KOBIS 서비스의 운영 상태, API 호출 한도를 확인하여 주시옵소서."
         )
         return
+    except BoxOfficeNotReady as error:
+        st.info(str(error))
+        return
     except ValueError as error:
         st.error(str(error))
         return
@@ -298,6 +330,7 @@ def main():
     # API의 영어 필드명을 표에 사용할 한국어 열 이름으로 바꿉니다.
     columns = {
         "rank": "순위",
+        "rankInten": "순위변동",
         "movieNm": "영화명",
         "openDt": "개봉일",
         "audiCnt": "관객수",
@@ -307,9 +340,11 @@ def main():
     try:
         df = pd.DataFrame(movies)[list(columns)].rename(columns=columns)
         # 숫자도 문자열로 오므로 정렬과 그래프를 만들기 전에 숫자로 바꿉니다.
-        for column in ["순위", "관객수", "누적관객", "스크린수"]:
+        for column in ["순위", "순위변동", "관객수", "누적관객", "스크린수"]:
             df[column] = pd.to_numeric(df[column], errors="raise").astype("int64")
         df = df.sort_values("순위").reset_index(drop=True)
+        # 정확히 100만 명인 작품은 제외하고, 이를 넘긴 작품에만 트로피를 붙입니다.
+        df.loc[df["누적관객"] > 1_000_000, "영화명"] += " 🏆"
         first_place = df.loc[df["순위"] == 1].iloc[0]
     except (KeyError, ValueError, TypeError, OverflowError, IndexError):
         st.error(
@@ -321,11 +356,11 @@ def main():
 
     st.subheader(f"흥행의 수위에 오른 작품 · 1위, {first_place['영화명']}")
     st.markdown(
-        "전일 가장 많은 관객의 선택을 받은 작품이옵니다. 하루의 관객수와 누적관객, "
+        "고르신 날 가장 많은 관객의 선택을 받은 작품이옵니다. 하루의 관객수와 누적관객, "
         "그리고 스크린수를 나란히 두어, 그 성세의 일면을 헤아려 보시옵소서."
     )
     card1, card2, card3 = st.columns(3)
-    card1.metric("어제 관객수", f"{first_place['관객수']:,}명")
+    card1.metric("당일 관객수", f"{first_place['관객수']:,}명")
     card2.metric("누적관객", f"{first_place['누적관객']:,}명")
     card3.metric("스크린수", f"{first_place['스크린수']:,}개")
 
@@ -337,10 +372,17 @@ def main():
     show_audience_chart(df)
     st.caption("막대나 작품명에 마우스를 올리시면 개봉일과 누적관객을 함께 살펴보실 수 있사옵니다.")
 
-    st.subheader("전일 박스오피스 순위 · 작품별 흥행 일람")
+    st.subheader("당일 박스오피스 순위 · 작품별 흥행 일람")
     st.caption("순위와 영화명, 개봉일 및 관객·스크린의 수효를 아래의 일람에 갖추어 기록하옵니다.")
-    st.dataframe(df, hide_index=True, width="stretch")
-    st.caption("— 전일의 은막을 비춘 관객의 발자취를 여기에 갈무리하옵니다. —")
+    st.caption(
+        "붉은 ↑는 전날보다 오른 순위, 푸른 ↓는 내려간 순위이며, —는 변동 없음을 뜻하옵니다. "
+        "영화명 곁의 🏆는 누적관객 100만 명을 넘긴 작품에 바치옵니다."
+    )
+    styled_df = df.style.map(style_rank_change, subset=["순위변동"]).format(
+        {"순위변동": format_rank_change}
+    )
+    st.dataframe(styled_df, hide_index=True, width="stretch")
+    st.caption("— 그날의 은막을 비춘 관객의 발자취를 여기에 갈무리하옵니다. —")
 
 
 if __name__ == "__main__":
